@@ -2,52 +2,59 @@
 
 const memcachePlus = require('memcache-plus'),
             crypto = require('crypto'),
+                 _ = require('lodash'),
          serialize = require('serialize-javascript'),
-            logger = require('log4js').getLogger()
+            logger = require('log4js').getLogger('memcached')
 
 const MAX_VALUE_SIZE = 1024 * 1024 * 3
 
-var m = new memcachePlus({
-  hosts: [`${SETTINGS.memcached.host}:${SETTINGS.memcached.port}`],
-  maxValueSize: MAX_VALUE_SIZE,
-})
-
-function toMD5(v){
-  if (typeof(v) === 'string' || v instanceof String){
-    return v
+class Memcached {
+  constructor(hosts){
+    this.m = new memcachePlus({
+      hosts: hosts,
+      maxValueSize: MAX_VALUE_SIZE,
+    })
   }
 
-  return crypto
-          .createHash('md5')
-          .update(serialize(v), 'utf-8')
-          .digest('hex')
-}
+  toMD5(v){
+    if (typeof(v) === 'string' || v instanceof String){
+      return v
+    }
 
-module.exports = {
-  set: (key, value, option) => {
-    const keyMD5 = toMD5(key)
+    return crypto
+            .createHash('md5')
+            .update(serialize(v), 'utf-8')
+            .digest('hex')
+  }
+
+  *set(key, value, option){
+    const keyMD5 = this.toMD5(key)
 
     let valueString;
     if (value instanceof Object){
       valueString = JSON.stringify(value)
     }
 
-    if ((valueString || value).length > MAX_VALUE_SIZE){
-      return new Promise((resolve, reject) => {
-        throw `memcached set values failed. ${valueString.length} over max size.`
-      })
+    try{
+      if ((valueString || value).length > MAX_VALUE_SIZE){
+        return new Promise((resolve, reject) => {
+          throw `memcached set values failed. ${valueString.length} over max size.`
+        })
+      }
+
+      return this.m.set(keyMD5, valueString || value, option)
+    }catch(e){
+      logger.error(`memcached error: ${e}`)
     }
+  }
 
-    return m.set(keyMD5, valueString || value, option)
-  },
-
-  get: function* (key, next, ttl){
+  *get(key, next, ttl){
     const isCompress = serialize(key).match(/compress/i) != null
-    const keyMD5 = toMD5(key)
+    const keyMD5 = this.toMD5(key)
 
     logger.info(`memcached key: ${serialize(key)}, md5: ${keyMD5}`)
 
-    let resultObject = yield m.get(keyMD5, {compressed: isCompress})
+    let resultObject = yield this.m.get(keyMD5, {compressed: isCompress})
     if (_.isNil(resultObject)){
       if (_.isNil(next)){
         return
@@ -56,9 +63,7 @@ module.exports = {
       logger.warn(`memcached not hit, md5: ${keyMD5}`);
       const result = yield next();
       if (!_.isNil(result)){
-        module.exports.set(keyMD5, result, {compressed: isCompress, ttl: ttl || 3600})
-          .then((r) => {})
-          .catch((e) => {logger.error(`memcached error: ${e}`)})
+        yield this.set(keyMD5, result, {compressed: isCompress, ttl: ttl || 3600})
       }
 
       resultObject = result
@@ -71,12 +76,14 @@ module.exports = {
     }catch(e){}
 
     return resultObject
-  },
+  }
 
-  del: (key) => {
-    const keyMD5 = toMD5(key)
+  del(key){
+    const keyMD5 = this.toMD5(key)
 
     logger.info(`memcached clear key: ${serialize(key)}, md5: ${keyMD5}`)
-    m.delete(keyMD5).then(_.noop())
+    this.m.delete(keyMD5).then(_.noop())
   }
 }
+
+module.exports = Memcached
