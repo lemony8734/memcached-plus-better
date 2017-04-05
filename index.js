@@ -82,7 +82,7 @@ class Memcached {
     const keyMD5 = this.toMD5(key)
 
     logger.info(`memcached clear key: ${serialize(key)}, md5: ${keyMD5}`)
-    this.m.delete(keyMD5).then(_.noop())
+    return this.m.delete(keyMD5)
   }
 }
 
