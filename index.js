@@ -37,9 +37,7 @@ class Memcached {
 
     try{
       if ((valueString || value).length > MAX_VALUE_SIZE){
-        return new Promise((resolve, reject) => {
-          throw `memcached set values failed. ${valueString.length} over max size.`
-        })
+        throw `memcached set values failed. ${valueString.length} over max size.`
       }
 
       return this.m.set(keyMD5, valueString || value, option)
